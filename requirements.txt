@@ -1,0 +1,3 @@
+rich>=13.0
+pyinstaller>=6.0
+# maxroll_scraper uses only stdlib (urllib, re, html.parser)
