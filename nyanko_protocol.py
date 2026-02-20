@@ -35,10 +35,10 @@ os.system("")  # enable ANSI escape codes on Windows
 # Optional: set initial size (user can resize; we read size each frame)
 try:
     sz = shutil.get_terminal_size()
-    if sz.columns < 80 or sz.lines < 24:
-        os.system("mode con: cols=100 lines=45")
+    if sz.columns < 100 or sz.lines < 30:
+        os.system("mode con: cols=130 lines=50")
 except Exception:
-    os.system("mode con: cols=100 lines=45")
+    os.system("mode con: cols=130 lines=50")
 
 # ── Dependency check ─────────────────────────────────────────
 try:
@@ -202,6 +202,7 @@ DAILY_TASKS = [
         "name": "Unstable Space",
         "desc": "2 runs max",
         "tip": "Luno, Honor Coins, gear drops",
+        "counter": 2,
     },
     {
         "id": "season_merits",
@@ -214,6 +215,7 @@ DAILY_TASKS = [
         "name": "Bureau Commissions",
         "desc": "Pick 3 of 6 (Bahamar!)",
         "tip": "Lv55+, ~1 min each, rest bonus up to 9",
+        "counter": 3,
     },
     {
         "id": "elite_chest",
@@ -244,6 +246,7 @@ DAILY_TASKS = [
         "name": "Homestead Commissions",
         "desc": "1800 Homestead EXP",
         "tip": "Lv40+, rest bonus up to 9 commissions",
+        "counter": 3,
     },
     {
         "id": "wbc_daily",
@@ -304,10 +307,25 @@ WEEKLY_TASKS = [
         "tip": "5K Luno, 480 Tokens, Rose Orb, Star Chests",
     },
     {
-        "id": "chaotic_reforge",
-        "name": "Chaotic Realm Reforges",
-        "desc": "20 runs weekly cap",
-        "tip": "Normal/Hard share cap; Master separate",
+        "id": "reforge_120",
+        "name": "Reforge Stones 120",
+        "desc": "20 runs weekly",
+        "tip": "Chaotic Realm Normal/Hard share cap",
+        "counter": 20,
+    },
+    {
+        "id": "reforge_140",
+        "name": "Reforge Stones 140",
+        "desc": "20 runs weekly",
+        "tip": "Chaotic Realm Normal/Hard share cap",
+        "counter": 20,
+    },
+    {
+        "id": "reforge_160",
+        "name": "Reforge Stones 160",
+        "desc": "20 runs weekly",
+        "tip": "Chaotic Realm Normal/Hard share cap",
+        "counter": 20,
     },
     {
         "id": "bane_lord",
@@ -359,6 +377,7 @@ SAVE_FILE = SAVE_DIR / "checklist.json"
 def load_data():
     default = {
         "daily": [], "weekly": [], "d_mark": "", "w_mark": "",
+        "daily_count": {}, "weekly_count": {},
         "build_guide_url": "", "build_guide_title": "", "build_gearing": "",
         "build_planner_url": "", "build_gear_slots": [],
         "build_food": "", "build_serum": "",
@@ -372,15 +391,21 @@ def load_data():
     for k in default:
         if k not in data:
             data[k] = default[k]
+    if not isinstance(data.get("daily_count"), dict):
+        data["daily_count"] = {}
+    if not isinstance(data.get("weekly_count"), dict):
+        data["weekly_count"] = {}
 
     # Auto-reset if a reset boundary has been crossed
     d_mark = last_daily_reset().isoformat()
     w_mark = last_weekly_reset().isoformat()
     if data.get("d_mark") != d_mark:
         data["daily"] = []
+        data["daily_count"] = {}
         data["d_mark"] = d_mark
     if data.get("w_mark") != w_mark:
         data["weekly"] = []
+        data["weekly_count"] = {}
         data["w_mark"] = w_mark
     return data
 
@@ -461,14 +486,36 @@ class NyankoApp:
     def checked(self):
         return self.data["daily"] if self.section == 0 else self.data["weekly"]
 
+    def counts(self):
+        return self.data["daily_count"] if self.section == 0 else self.data["weekly_count"]
+
+    def is_counter_task(self, task):
+        return "counter" in task and task["counter"] is not None
+
     # ── Actions ──────────────────────────────────────────────
 
     def toggle(self):
         ts = self.tasks()
         if not ts or self.cursor >= len(ts):
             return
-        tid = ts[self.cursor]["id"]
+        task = ts[self.cursor]
+        tid = task["id"]
         key = "daily" if self.section == 0 else "weekly"
+        count_key = "daily_count" if self.section == 0 else "weekly_count"
+        counts = self.data[count_key]
+
+        if self.is_counter_task(task):
+            cap = task["counter"]
+            cur = counts.get(tid, 0)
+            if cur < cap:
+                counts[tid] = cur + 1
+                self.flash = random.choice(CHECK_MSGS) + " " + self.neko_face
+            else:
+                self.flash = "Already at cap, nya~ " + self.neko_face
+            self.flash_time = time.time()
+            save_data(self.data)
+            return
+
         if tid in self.data[key]:
             self.data[key].remove(tid)
             self.flash = random.choice(UNCHECK_MSGS) + " " + self.neko_face
@@ -477,6 +524,23 @@ class NyankoApp:
             self.flash = random.choice(CHECK_MSGS) + " " + self.neko_face
         self.flash_time = time.time()
         save_data(self.data)
+
+    def counter_decrement(self):
+        ts = self.tasks()
+        if not ts or self.cursor >= len(ts):
+            return
+        task = ts[self.cursor]
+        if not self.is_counter_task(task):
+            return
+        tid = task["id"]
+        count_key = "daily_count" if self.section == 0 else "weekly_count"
+        counts = self.data[count_key]
+        cur = counts.get(tid, 0)
+        if cur > 0:
+            counts[tid] = cur - 1
+            self.flash = "Removed one, nya~ " + self.neko_face
+            self.flash_time = time.time()
+            save_data(self.data)
 
     def switch_section(self):
         self.section = (self.section + 1) % 3
@@ -599,13 +663,12 @@ class NyankoApp:
             term_height = max(24, ts.lines)
         except Exception:
             term_width, term_height = 100, 45
-        # Render entire frame into a buffer first, then paint in one shot
+        # Render entire frame into a buffer; avoid fixed height to prevent double/weird output on resize
         buf = StringIO()
         out = Console(
             file=buf,
             highlight=False,
             width=term_width,
-            height=term_height,
             force_terminal=True,
             color_system=console.color_system,
         )
@@ -617,7 +680,15 @@ class NyankoApp:
         ts = self.tasks()
         self.cursor = min(self.cursor, max(0, len(ts) - 1))
         chk = self.checked()
-        done = sum(1 for t in ts if t["id"] in chk)
+        counts = self.counts()
+
+        def task_done(t):
+            if self.is_counter_task(t):
+                cap = t["counter"]
+                return (counts.get(t["id"], 0) >= cap) if cap else False
+            return t["id"] in chk
+
+        done = sum(1 for t in ts if task_done(t))
         total = len(ts)
         progress = done / total if total > 0 else 0
         cat = pick_cat(progress)
@@ -693,7 +764,7 @@ class NyankoApp:
             lines = frame.split("\n")
             if len(lines) > term_height:
                 frame = "\n".join(lines[:term_height]) + "\033[0m"
-            sys.stdout.write("\033[H\033[2J" + frame)
+            sys.stdout.write("\033[H\033[2J\033[0m" + frame)
             sys.stdout.flush()
             return
 
@@ -725,23 +796,31 @@ class NyankoApp:
             table.add_column("Tip", min_width=20, style="dim italic")
 
         for i, task in enumerate(ts):
-            is_on = task["id"] in chk
             is_cur = i == self.cursor
+            is_counter = self.is_counter_task(task)
+            if is_counter:
+                cap = task["counter"]
+                cnt = counts.get(task["id"], 0)
+                is_on = cnt >= cap
+                desc_extra = f"  [bright_yellow]{cnt}/{cap}[/]"
+            else:
+                is_on = task["id"] in chk
+                desc_extra = ""
 
             ptr = "[bold bright_yellow]▸[/]" if is_cur else " "
             chk_mark = "[bold bright_green]✓[/]" if is_on else "[dim]○[/]"
 
             if is_on:
                 name = f"[dim strikethrough]{task['name']}[/]"
-                desc = f"[dim strikethrough]{task['desc']}[/]"
+                desc = f"[dim strikethrough]{task['desc']}[/]{desc_extra}"
                 tip = f"[dim]{task.get('tip', '')}[/]"
             elif is_cur:
                 name = f"[bold bright_white]{task['name']}[/]"
-                desc = f"[bright_cyan]{task['desc']}[/]"
+                desc = f"[bright_cyan]{task['desc']}[/]{desc_extra}"
                 tip = f"[bright_cyan]{task.get('tip', '')}[/]"
             else:
                 name = f"[white]{task['name']}[/]"
-                desc = f"[dim]{task['desc']}[/]"
+                desc = f"[dim]{task['desc']}[/]{desc_extra}"
                 tip = f"[dim]{task.get('tip', '')}[/]"
 
             sty = "on grey15" if is_cur else None
@@ -774,19 +853,20 @@ class NyankoApp:
         tip_key = "Hide tips" if self.show_tips else "Show tips"
         out.print(
             f"  [dim][[/][bright_yellow]↑↓[/][dim]] Move  "
-            f"[[/][bright_yellow]Space[/][dim]] Toggle  "
+            f"[[/][bright_yellow]Space[/][dim]] +1 / Toggle  "
+            f"[[/][bright_yellow]Backspace[/][dim]] -1 (counts)  "
             f"[[/][bright_yellow]Tab[/][dim]] Switch  "
-            f"[[/][bright_yellow]I[/][dim]] Import build  "
+            f"[[/][bright_yellow]I[/][dim]] Import  "
             f"[[/][bright_yellow]T[/][dim]] {tip_key}  "
             f"[[/][bright_yellow]Q[/][dim]] Quit[/]"
         )
 
-        # Full clear then draw so no leftover from previous (larger) frame; cap height
+        # Full clear then single draw to avoid resize double-items; cap height to terminal
         frame = buf.getvalue()
         lines = frame.split("\n")
         if len(lines) > term_height:
             frame = "\n".join(lines[:term_height]) + "\033[0m"
-        sys.stdout.write("\033[H\033[2J" + frame)
+        sys.stdout.write("\033[H\033[2J\033[0m" + frame)
         sys.stdout.flush()
 
     # ── Input handling ───────────────────────────────────────
@@ -813,6 +893,8 @@ class NyankoApp:
         # Regular keys
         if key in (b' ', b'\r'):        # Space or Enter
             self.toggle()
+        elif key == b'\x08':            # Backspace (decrement counter)
+            self.counter_decrement()
         elif key == b'\t':              # Tab
             self.switch_section()
         elif key in (b'q', b'Q'):       # Quit
